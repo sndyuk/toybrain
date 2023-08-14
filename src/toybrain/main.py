@@ -1,58 +1,65 @@
 import numpy as np
+from nptyping import NDArray, Int, Float, Shape
 from csv import reader
 
 np.random.seed(1)
+np.set_printoptions(precision=4, suppress=True)
+
+
+class Neuron:
+    def __init__(self, weights: NDArray[Shape["1"], Float]):
+        self.weights = weights
+        self.output = 0.0
+        self.delta = 0.0
+    
+    def __repr__(self):
+        return f"Neuron(weights={self.weights}, output={self.output}, delta={self.delta})"
+    
+    def __str__(self):
+        return self.__repr__()
+
+
+class Network:
+    def __init__(self, hidden_layer: list[Neuron], output_layer: list[Neuron]):
+        self.layers = [hidden_layer, output_layer]
+    
+    def __repr__(self):
+        return f"Network({self.layers})"
+    
+    def __str__(self):
+        return self.__repr__()
 
 
 # Initialize a network
-def initialize_network(n_inputs, n_hidden, n_outputs):
-    network = list()
-    # Hidden layer
-    # If n_inputs = 2 and n_hidden = 1 then [{'weights': [0.417022004702574, 0.7203244934421581, 0.00011437481734488664]}]
-    hidden_layer = [
-        {"weights": [np.random.random() for i in range(n_inputs + 1)]}
-        for i in range(n_hidden)
-    ]
-    network.append(hidden_layer)
-
-    # Output layer
-    # If n_hidden = 1 and n_outputs = 2 then [{'weights': [0.30233257263183977, 0.14675589081711304]}, {'weights': [0.0923385947687978, 0.1862602113776709]}]
-    output_layer = [
-        {"weights": [np.random.random() for i in range(n_hidden + 1)]}
-        for i in range(n_outputs)
-    ]
-    network.append(output_layer)
-    return network
+def initialize_network(n_inputs: int, n_hidden: int, n_outputs: int):
+    hidden_layer = [Neuron(np.random.rand(n_inputs + 1)) for _ in range(n_hidden)]
+    output_layer = [Neuron(np.random.rand(n_hidden + 1)) for _ in range(n_outputs)]
+    return Network(hidden_layer, output_layer)
 
 
 # --- Forward Propagate
 
 
 # Calculate neuron activation for an input
-def activate(weights, inputs):
-    activation = weights[-1]
-    for i in range(len(weights) - 1):
-        w = weights[i] * inputs[i]
-        # print(f"w: {w}")
-        activation += w
-    return activation
+def activate(weights: NDArray[Shape["1"], Float], inputs: NDArray[Shape["1"], Float]) -> float:
+    return weights[-1] + np.dot(weights[:-1], inputs[:weights.shape[0] - 1])
 
 
 # Transfer neuron activation
-def transfer(activation):
+def transfer(activation: float) -> float:
     # sigmoid activation function
     return 1.0 / (1.0 + np.exp(-activation))
 
 
 # Forward propagate input to a network output
-def forward_propagate(network, row):
+def forward_propagate(network: Network, row: NDArray[Shape["1"], Float]) -> NDArray[Shape["1"], Float]:
     inputs = row
-    for layer in network:
-        new_inputs = []
-        for neuron in layer:
-            activation = activate(neuron["weights"], inputs)
-            neuron["output"] = transfer(activation)
-            new_inputs.append(neuron["output"])
+    for layer in network.layers:
+        new_inputs = np.zeros(len(layer))
+        for i, neuron in enumerate(layer):
+            activation = activate(neuron.weights, inputs)
+            neuron.output = transfer(activation)
+            new_inputs[i] = neuron.output
         inputs = new_inputs
     return inputs
 
@@ -66,57 +73,55 @@ def transfer_derivative(output):
 
 
 # Backpropagate error and store in neurons
-def backward_propagate_error(network, expected):
-    for i in reversed(range(len(network))):
-        layer = network[i]
-        errors = list()
-        if i != len(network) - 1:
-            for j in range(len(layer)):
-                error = 0.0
-                for neuron in network[i + 1]:
-                    error += neuron["weights"][j] * neuron["delta"]
-                errors.append(error)
+def backward_propagate_error(network: Network, expected: NDArray[Shape["1"], Int]):
+    for i in reversed(range(len(network.layers))):
+        layer = network.layers[i]
+        if i != len(network.layers) - 1:
+            # Hidden layers
+            errors = [
+                sum(neuron.weights[j] * neuron.delta for neuron in network.layers[i + 1])
+                for j, _ in enumerate(layer)
+            ]
         else:
-            for j in range(len(layer)):
-                neuron = layer[j]
-                errors.append(neuron["output"] - expected[j])
-        for j in range(len(layer)):
-            neuron = layer[j]
-            neuron["delta"] = errors[j] * transfer_derivative(neuron["output"])
+            # Output layer
+            errors = [
+                neuron.output - v
+                for neuron, v in zip(layer, expected)
+            ]
+        for j, neuron in enumerate(layer):
+            neuron.delta = errors[j] * transfer_derivative(neuron.output)
 
 
 # --- Train Network
 
 
 # Update network weights with error
-def update_weights(network, row, l_rate):
-    for i in range(len(network)):
-        inputs = row[:-1]
-        if i != 0:
-            inputs = [neuron["output"] for neuron in network[i - 1]]
-        for neuron in network[i]:
-            for j in range(len(inputs)):
-                neuron["weights"][j] -= l_rate * neuron["delta"] * inputs[j]
-            neuron["weights"][-1] -= l_rate * neuron["delta"]
+def update_weights(network: Network, row: NDArray[Shape["1"], Float], l_rate: float):
+    for i, layer in enumerate(network.layers):
+        inputs = [neuron.output for neuron in network.layers[i - 1]] if i != 0 else row[:-1]
+        
+        for neuron in layer:
+            for j, v in enumerate(inputs):
+                neuron.weights[j] -= l_rate * neuron.delta * v
+            neuron.weights[-1] -= l_rate * neuron.delta
 
 
 # Train a network for a fixed number of epochs
-def train_network(network, train, l_rate, n_epoch, n_outputs):
+def train_network(network: Network, train: NDArray, l_rate: float, n_epoch: int, n_outputs: int):
     for epoch in range(n_epoch):
         sum_error = 0
         for row in train:
             outputs = forward_propagate(network, row)
-            expected = [0 for i in range(n_outputs)]
-            expected[row[-1]] = 1
-            sum_error += sum(
-                [(expected[i] - outputs[i]) ** 2 for i in range(len(expected))]
-            )
+            expected = np.zeros(n_outputs, dtype=int)
+            expected[row[-1].astype(int)] = 1
+            sum_error += np.sum((expected - outputs) ** 2)
             backward_propagate_error(network, expected)
             update_weights(network, row, l_rate)
-        print(">epoch=%d, lrate=%.3f, error=%.3f" % (epoch, l_rate, sum_error))
+        if epoch % 50 == 0:
+            print(">epoch=%d, error=%.3f" % (epoch, sum_error))
 
 
-dataset = [
+dataset = np.array([
     # format = [Input, Input, Output]
     [2.7810836, 2.550537003, 0],
     [1.465489372, 2.362125076, 0],
@@ -128,11 +133,11 @@ dataset = [
     [6.922596716, 1.77106367, 1],
     [8.675418651, -0.242068655, 1],
     [7.673756466, 3.508563011, 1],
-]
+], dtype=float)
 
 n_inputs = len(dataset[0]) - 1
-n_outputs = len(set([row[-1] for row in dataset]))
-network = initialize_network(n_inputs, 2, n_outputs)
+n_outputs = len(np.unique(dataset[:, -1]))
+network = initialize_network(n_inputs, 3, n_outputs)
 
 # test the forward propagation
 # row = [0, 0, None]
@@ -148,12 +153,12 @@ network = initialize_network(n_inputs, 2, n_outputs)
 
 # Before training
 print("Before training")
-for layer in network:
+for layer in network.layers:
     print(layer)
 train_network(network, dataset, 0.5, 200, n_outputs)
 # After training
 print("After training")
-for layer in network:
+for layer in network.layers:
     print(layer)
 
 
@@ -161,9 +166,9 @@ for layer in network:
 
 
 # Make a prediction with a network
-def predict(network, row):
+def predict(network: Network, row: NDArray[Shape["1"], Float]):
     outputs = forward_propagate(network, row)
-    return outputs.index(max(outputs))
+    return np.argmax(outputs)
 
 
 for row in dataset:
@@ -174,7 +179,7 @@ for row in dataset:
 # --- CSV Dataset utils
 # Load a CSV file
 def load_csv(filename):
-    dataset = list()
+    dataset = []
     with open(filename, "r") as file:
         csv_reader = reader(file)
         for row in csv_reader:
@@ -202,30 +207,25 @@ def str_column_to_int(dataset, column):
     return lookup
 
 
-# Find the min and max values for each column
-def dataset_minmax(dataset):
-    minmax = list()
-    stats = [[min(column), max(column)] for column in zip(*dataset)]
-    return stats
-
-
 # Rescale dataset columns to the range 0-1
-def normalize_dataset(dataset, minmax):
+def normalize_dataset(dataset: list[list[float]]):
+    # Find the min and max values for each column
+    minmax = [(min(column), max(column)) for column in zip(*dataset)]
+
     for row in dataset:
         for i in range(len(row) - 1):
             row[i] = (row[i] - minmax[i][0]) / (minmax[i][1] - minmax[i][0])
 
 
 # Split a dataset into k folds
-def cross_validation_split(dataset, n_folds):
-    dataset_split = list()
-    dataset_copy = list(dataset)
+def cross_validation_split(dataset: list[list[float]], n_folds: int) -> list[list[list[float]]]:
+    dataset_split: list[list[list[float]]] = []
     fold_size = int(len(dataset) / n_folds)
-    for i in range(n_folds):
-        fold = list()
+    for _ in range(n_folds):
+        fold: list[list[float]] = []
         while len(fold) < fold_size:
-            index = np.random.randint(len(dataset_copy))
-            fold.append(dataset_copy.pop(index))
+            index = np.random.randint(len(dataset))
+            fold.append(dataset[index])
         dataset_split.append(fold)
     return dataset_split
 
@@ -240,37 +240,43 @@ def accuracy_metric(actual, predicted):
 
 
 # Evaluate an algorithm using a cross validation split
-def evaluate_algorithm(dataset, algorithm, n_folds, *args):
+def evaluate_algorithm(dataset: list[list[float]], algorithm, n_folds: int, *args):
     folds = cross_validation_split(dataset, n_folds)
-    scores = list()
-    for fold in folds:
-        train_set = list(folds)
-        train_set.remove(fold)
-        train_set = sum(train_set, [])
-        test_set = list()
-        for row in fold:
-            row_copy = list(row)
-            test_set.append(row_copy)
-            row_copy[-1] = None
-        predicted = algorithm(train_set, test_set, *args)
+    scores = []
+
+    for i, fold in enumerate(folds):
+        # Combine training sets and flatten
+        train_set = [row for j, f in enumerate(folds) if j != i for row in f]
+
+        # Prepare test set by replacing the last column value with NaN
+        test_set = [row[:-1] + [float('nan')] for row in fold]
+
+        # Convert to numpy arrays and make them read-only
+        train_np, test_np = np.array(train_set, dtype=float), np.array(test_set, dtype=float)
+        for arr in (train_np, test_np):
+            arr.flags.writeable = False
+
+        # Predict and calculate accuracy
+        predicted = algorithm(train_np, test_np, *args)
         actual = [row[-1] for row in fold]
         accuracy = accuracy_metric(actual, predicted)
+
         scores.append(accuracy)
+
     return scores
 
 
 # Backpropagation Algorithm With Stochastic Gradient Descent
-def back_propagation(train, test, l_rate, n_epoch, n_hidden):
+def back_propagation(train: NDArray, test: NDArray, l_rate: float, n_epoch: int, n_hidden: int):
     n_inputs = len(train[0]) - 1
-    n_outputs = len(set([row[-1] for row in train]))
+    n_outputs = len(np.unique(train[:, -1]))
     network = initialize_network(n_inputs, n_hidden, n_outputs)
     train_network(network, train, l_rate, n_epoch, n_outputs)
-    predictions = list()
+    predictions = []
     for row in test:
         prediction = predict(network, row)
         predictions.append(prediction)
     return predictions
-
 
 filename = "dataset/seeds_dataset.csv"
 dataset = load_csv(filename)
@@ -279,12 +285,12 @@ for i in range(len(dataset[0]) - 1):
 # convert class column to integers
 str_column_to_int(dataset, len(dataset[0]) - 1)
 # normalize input variables
-minmax = dataset_minmax(dataset)
-normalize_dataset(dataset, minmax)
+normalize_dataset(dataset)
+
 # evaluate algorithm
-n_folds = 5
+n_folds = 3
 l_rate = 0.3
-n_epoch = 500
+n_epoch = 700
 n_hidden = 5
 scores = evaluate_algorithm(
     dataset, back_propagation, n_folds, l_rate, n_epoch, n_hidden

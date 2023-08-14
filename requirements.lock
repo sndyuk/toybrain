@@ -25,6 +25,7 @@ matplot==0.1.9
 matplotlib==3.7.2
 mdurl==0.1.2
 more-itertools==10.1.0
+nptyping==2.5.0
 numpy==1.25.2
 packaging==23.1
 pillow==10.0.0
